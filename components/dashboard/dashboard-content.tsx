@@ -258,6 +258,7 @@ export function DashboardContent() {
         current_stock: currentStock,
       };
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- itemBreakdown derived from confirmedSalesInRange, saleItems, stockInRange, stockEntries, items only
   }, [
     confirmedSalesInRange,
     saleItems,

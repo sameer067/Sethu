@@ -140,7 +140,7 @@ export async function getStockEntries(): Promise<(StockEntry & { items: { name: 
       },
     },
   ]).toArray();
-  return docs.map((d) => toStockEntry(d as Record<string, unknown> & { item?: { name: string; unit: string } }));
+  return docs.map((d) => toStockEntry(d as Record<string, unknown> & { item?: { name: string; unit: string } | null })) as (StockEntry & { items: { name: string; unit: string } | null })[];
 }
 
 export async function getCurrentStock(): Promise<{ item_id: string; item_name: string; unit: string; stock: number }[]> {
