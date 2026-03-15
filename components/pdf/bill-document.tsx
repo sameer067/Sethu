@@ -7,7 +7,6 @@ import {
   View,
   Image,
   StyleSheet,
-  Font,
 } from "@react-pdf/renderer";
 
 /** Public path for the business logo (used in PDF). */
@@ -124,6 +123,7 @@ export function BillDocument({ data }: { data: BillData }) {
       <Page size="A4" style={styles.page}>
         {data.logoUrl ? (
           <View style={styles.logoWrap}>
+            {/* eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf Image has no alt prop; PDF is not HTML. */}
             <Image src={data.logoUrl} style={styles.logo} />
           </View>
         ) : null}
