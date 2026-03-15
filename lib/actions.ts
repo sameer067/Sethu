@@ -27,8 +27,8 @@ function toCustomer(doc: Record<string, unknown>): Customer {
   };
 }
 
-function toStockEntry(doc: Record<string, unknown> & { item?: { name: string; unit: string } }): StockEntry & { items?: { name: string; unit: string } | null } {
-  const base: StockEntry & { items?: { name: string; unit: string } | null } = {
+function toStockEntry(doc: Record<string, unknown> & { item?: { name: string; unit: string } | null }): StockEntry & { items: { name: string; unit: string } | null } {
+  return {
     id: (doc._id as ObjectId).toString(),
     user_id: (doc.userId as ObjectId).toString(),
     item_id: (doc.itemId as ObjectId).toString(),
@@ -37,9 +37,8 @@ function toStockEntry(doc: Record<string, unknown> & { item?: { name: string; un
     date: doc.date as string,
     note: (doc.note as string) ?? null,
     created_at: (doc.createdAt as Date)?.toISOString?.() ?? String(doc.createdAt),
+    items: doc.item ?? null,
   };
-  if (doc.item) base.items = doc.item;
-  return base;
 }
 
 async function getUserId(): Promise<string> {
@@ -147,29 +146,29 @@ export async function getStockEntries(): Promise<(StockEntry & { items: { name: 
 export async function getCurrentStock(): Promise<{ item_id: string; item_name: string; unit: string; stock: number }[]> {
   const userId = await getUserId();
   const db = await getDb();
-  const entries = await db.collection("stock_entries").find({ userId: new ObjectId(userId) }).toArray();
+  const entries = (await db.collection("stock_entries").find({ userId: new ObjectId(userId) }).toArray()) as unknown as { itemId: ObjectId; quantity: number }[];
   const inMap = new Map<string, number>();
-  entries.forEach((e: { itemId: import("mongodb").ObjectId; quantity: number }) => {
-    const id = (e.itemId as ObjectId).toString();
+  entries.forEach((e) => {
+    const id = e.itemId.toString();
     inMap.set(id, (inMap.get(id) ?? 0) + Number(e.quantity));
   });
-  const sales = await db.collection("sales").find({
+  const sales = (await db.collection("sales").find({
     userId: new ObjectId(userId),
     $or: [{ status: "completed" }, { status: { $exists: false }, isConfirmed: true }],
-  }).project({ _id: 1 }).toArray();
-  const saleIds = sales.map((s: { _id: ObjectId }) => s._id);
-  const saleItems = await db.collection("sale_items").find({ saleId: { $in: saleIds } }).toArray();
+  }).project({ _id: 1 }).toArray()) as unknown as { _id: ObjectId }[];
+  const saleIds = sales.map((s) => s._id);
+  const saleItems = (await db.collection("sale_items").find({ saleId: { $in: saleIds } }).toArray()) as unknown as { itemId: ObjectId; quantity: number }[];
   const outMap = new Map<string, number>();
-  saleItems.forEach((si: { itemId: ObjectId; quantity: number }) => {
-    const id = (si.itemId as ObjectId).toString();
+  saleItems.forEach((si) => {
+    const id = si.itemId.toString();
     outMap.set(id, (outMap.get(id) ?? 0) + Number(si.quantity));
   });
-  const itemIds = [...new Set([...inMap.keys(), ...outMap.keys()])];
+  const itemIds = Array.from(new Set(Array.from(inMap.keys()).concat(Array.from(outMap.keys()))));
   if (itemIds.length === 0) return [];
-  const items = await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray();
+  const items = (await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray()) as unknown as { _id: ObjectId; name: string; unit: string }[];
   const nameMap = new Map<string, { name: string; unit: string }>();
-  items.forEach((i: { _id: ObjectId; name: string; unit: string }) => {
-    nameMap.set((i._id as ObjectId).toString(), { name: i.name, unit: i.unit });
+  items.forEach((i) => {
+    nameMap.set(i._id.toString(), { name: i.name, unit: i.unit });
   });
   return itemIds.map((item_id) => ({
     item_id,
@@ -231,37 +230,38 @@ export async function getCustomerById(id: string): Promise<Customer | null> {
 export async function getSalesByCustomerId(customerId: string): Promise<(Sale & { items: { name: string; unit: string; quantity: number; selling_price_per_unit: number }[] })[]> {
   const userId = await getUserId();
   const db = await getDb();
-  const sales = await db.collection("sales").find({ userId: new ObjectId(userId), customerId: new ObjectId(customerId) }).sort({ date: -1 }).toArray();
+  const sales = (await db.collection("sales").find({ userId: new ObjectId(userId), customerId: new ObjectId(customerId) }).sort({ date: -1 }).toArray()) as unknown as { _id: ObjectId; userId: ObjectId; customerId: ObjectId; date: string; totalAmount: number; paymentCash: number; paymentUpi: number; isConfirmed?: boolean; billNumber?: string; status?: import("@/lib/types").SaleStatus; createdAt?: Date }[];
   if (sales.length === 0) return [];
-  const saleIds = sales.map((s: { _id: ObjectId }) => s._id);
-  const saleItems = await db.collection("sale_items").find({ saleId: { $in: saleIds } }).toArray();
-  const itemIds = [...new Set((saleItems as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString()))];
-  const items = await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray();
+  const saleIds = sales.map((s) => s._id);
+  const saleItems = (await db.collection("sale_items").find({ saleId: { $in: saleIds } }).toArray()) as unknown as { saleId: ObjectId; itemId: ObjectId; quantity: number; sellingPricePerUnit: number }[];
+  const itemIds = Array.from(new Set(saleItems.map((si) => si.itemId.toString())));
+  const items = (await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray()) as unknown as { _id: ObjectId; name: string; unit: string }[];
   const itemMap = new Map<string, { name: string; unit: string }>();
-  items.forEach((i: { _id: ObjectId; name: string; unit: string }) => {
-    itemMap.set((i._id as ObjectId).toString(), { name: i.name, unit: i.unit });
+  items.forEach((i) => {
+    itemMap.set(i._id.toString(), { name: i.name, unit: i.unit });
   });
-  return sales.map((sale: Record<string, unknown>) => {
-    const saleIdStr = (sale._id as ObjectId).toString();
-    const itemsForSale = (saleItems as { saleId: ObjectId; itemId: ObjectId; quantity: number; sellingPricePerUnit: number }[])
-      .filter((si) => (si.saleId as ObjectId).toString() === saleIdStr)
+  return sales.map((sale) => {
+    const saleIdStr = sale._id.toString();
+    const itemsForSale = saleItems
+      .filter((si) => si.saleId.toString() === saleIdStr)
       .map((si) => ({
-        name: itemMap.get((si.itemId as ObjectId).toString())?.name ?? "",
-        unit: itemMap.get((si.itemId as ObjectId).toString())?.unit ?? "",
+        name: itemMap.get(si.itemId.toString())?.name ?? "",
+        unit: itemMap.get(si.itemId.toString())?.unit ?? "",
         quantity: si.quantity,
         selling_price_per_unit: si.sellingPricePerUnit,
       }));
     return {
       id: saleIdStr,
-      user_id: (sale.userId as ObjectId).toString(),
-      customer_id: (sale.customerId as ObjectId).toString(),
+      user_id: sale.userId.toString(),
+      customer_id: sale.customerId.toString(),
       date: sale.date as string,
       total_amount: Number(sale.totalAmount),
       payment_cash: Number(sale.paymentCash),
       payment_upi: Number(sale.paymentUpi),
       is_confirmed: Boolean(sale.isConfirmed),
+      status: (sale.status as import("@/lib/types").SaleStatus) ?? (sale.isConfirmed ? "completed" : "tentative"),
       bill_number: (sale.billNumber as string) ?? null,
-      created_at: (sale.createdAt as Date)?.toISOString?.() ?? "",
+      created_at: sale.createdAt?.toISOString?.() ?? "",
       items: itemsForSale,
     };
   });
@@ -269,10 +269,10 @@ export async function getSalesByCustomerId(customerId: string): Promise<(Sale & 
 
 // ---- Sales ----
 async function getAverageCostForItem(db: Awaited<ReturnType<typeof getDb>>, userId: ObjectId, itemId: ObjectId): Promise<number> {
-  const entries = await db.collection("stock_entries").find({ userId, itemId }).toArray();
+  const entries = (await db.collection("stock_entries").find({ userId, itemId }).toArray()) as unknown as { quantity: number; costPricePerUnit: number }[];
   let totalQty = 0;
   let totalCost = 0;
-  (entries as { quantity: number; costPricePerUnit: number }[]).forEach((e) => {
+  entries.forEach((e) => {
     totalQty += Number(e.quantity);
     totalCost += Number(e.quantity) * Number(e.costPricePerUnit);
   });
@@ -354,16 +354,16 @@ export async function getSalesList(): Promise<{
   const saleItems = saleIds.length > 0
     ? await db.collection("sale_items").find({ saleId: { $in: saleIds } }).toArray()
     : [];
-  const customerIds = [...new Set((sales as { customerId: ObjectId }[]).map((s) => (s.customerId as ObjectId).toString()))];
+  const customerIds = Array.from(new Set((sales as unknown as { customerId: ObjectId }[]).map((s) => (s.customerId as ObjectId).toString())));
   const customers = await db.collection("customers").find({ _id: { $in: customerIds.map((id) => new ObjectId(id)) } }).toArray();
   const customerMap = new Map<string, string>();
-  (customers as { _id: ObjectId; name: string }[]).forEach((c) => {
+  (customers as unknown as { _id: ObjectId; name: string }[]).forEach((c) => {
     customerMap.set((c._id as ObjectId).toString(), c.name);
   });
   const list = (sales as Record<string, unknown>[]).map((sale) => {
     const saleIdStr = (sale._id as ObjectId).toString();
     const status = (sale.status as string) ?? "completed";
-    const itemsForSale = (saleItems as { saleId: ObjectId; quantity: number; sellingPricePerUnit: number; costPricePerUnit?: number }[])
+    const itemsForSale = (saleItems as unknown as { saleId: ObjectId; quantity: number; sellingPricePerUnit: number; costPricePerUnit?: number }[])
       .filter((si) => (si.saleId as ObjectId).toString() === saleIdStr);
     const profitOnSold = status === "completed"
       ? itemsForSale.reduce(
@@ -401,15 +401,15 @@ export async function getSaleByIdForEdit(saleId: string): Promise<{
   if (!sale) return null;
   const status = (sale as Record<string, unknown>).status as string ?? "completed";
   const saleItems = await db.collection("sale_items").find({ saleId: new ObjectId(saleId) }).toArray();
-  const itemIds = [...new Set((saleItems as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString()))];
+  const itemIds = Array.from(new Set((saleItems as unknown as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString())));
   const itemsData = await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray();
   const itemMap = new Map<string, { name: string; unit: string }>();
-  (itemsData as { _id: ObjectId; name: string; unit: string }[]).forEach((i) => {
+  (itemsData as unknown as { _id: ObjectId; name: string; unit: string }[]).forEach((i) => {
     itemMap.set((i._id as ObjectId).toString(), { name: i.name, unit: i.unit });
   });
   const [customers, activeItems, stockList] = await Promise.all([getCustomers(), getActiveItems(), getCurrentStock()]);
   const currentStock = stockList.map((s) => ({ item_id: s.item_id, stock: s.stock }));
-  const items = (saleItems as { itemId: ObjectId; quantity: number; sellingPricePerUnit: number; costPricePerUnit?: number }[]).map((si) => ({
+  const items = (saleItems as unknown as { itemId: ObjectId; quantity: number; sellingPricePerUnit: number; costPricePerUnit?: number }[]).map((si) => ({
     item_id: (si.itemId as ObjectId).toString(),
     item_name: itemMap.get((si.itemId as ObjectId).toString())?.name ?? "",
     unit: itemMap.get((si.itemId as ObjectId).toString())?.unit ?? "",
@@ -535,16 +535,17 @@ export async function completeTentativeSale(saleId: string): Promise<{ billNumbe
     { _id: new ObjectId(saleId), userId: oid },
     { $set: { status: "completed", isConfirmed: true, billNumber, updatedAt: new Date() } }
   );
-  const customer = await db.collection("customers").findOne({ _id: (sale as Record<string, unknown>).customerId });
+  const customerId = (sale as Record<string, unknown>).customerId as ObjectId;
+  const customer = await db.collection("customers").findOne({ _id: customerId });
   const saleItems = await db.collection("sale_items").find({ saleId: new ObjectId(saleId) }).toArray();
-  const itemIds = [...new Set((saleItems as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString()))];
+  const itemIds = Array.from(new Set((saleItems as unknown as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString())));
   const itemsData = await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray();
   const itemMap = new Map<string, { displayName: string; unit: string }>();
-  (itemsData as { _id: ObjectId; name: string; billingName?: string; unit: string }[]).forEach((i) => {
+  (itemsData as unknown as { _id: ObjectId; name: string; billingName?: string; unit: string }[]).forEach((i) => {
     const displayName = (i.billingName as string)?.trim() || i.name;
     itemMap.set((i._id as ObjectId).toString(), { displayName, unit: i.unit });
   });
-  const items = (saleItems as { itemId: ObjectId; quantity: number; sellingPricePerUnit: number }[]).map((si) => ({
+  const items = (saleItems as unknown as { itemId: ObjectId; quantity: number; sellingPricePerUnit: number }[]).map((si) => ({
     name: itemMap.get((si.itemId as ObjectId).toString())?.displayName ?? "",
     unit: itemMap.get((si.itemId as ObjectId).toString())?.unit ?? "",
     quantity: si.quantity,
@@ -553,8 +554,8 @@ export async function completeTentativeSale(saleId: string): Promise<{ billNumbe
   return {
     billNumber,
     sale: {
-      customer_name: (customer as { name: string })?.name ?? "",
-      customer_phone: (customer as { phone?: string })?.phone ?? null,
+      customer_name: (customer as unknown as { name: string } | null)?.name ?? "",
+      customer_phone: (customer as unknown as { phone?: string } | null)?.phone ?? null,
       date: (sale as Record<string, unknown>).date as string,
       total_amount: Number((sale as Record<string, unknown>).totalAmount),
       payment_cash: Number((sale as Record<string, unknown>).paymentCash),
@@ -592,12 +593,13 @@ async function getSaleBillDataInternal(
   const billNumber = options.forTentative
     ? "Draft"
     : ((sale as Record<string, unknown>).billNumber as string);
-  const customer = await db.collection("customers").findOne({ _id: (sale as Record<string, unknown>).customerId });
+  const customerIdForBill = (sale as Record<string, unknown>).customerId as ObjectId;
+  const customer = await db.collection("customers").findOne({ _id: customerIdForBill });
   const saleItems = await db.collection("sale_items").find({ saleId: new ObjectId(saleId) }).toArray();
-  const itemIds = [...new Set((saleItems as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString()))];
+  const itemIds = Array.from(new Set((saleItems as unknown as { itemId: ObjectId }[]).map((si) => (si.itemId as ObjectId).toString())));
   const itemsData = await db.collection("items").find({ _id: { $in: itemIds.map((id) => new ObjectId(id)) } }).toArray();
   const itemMap = new Map<string, { displayName: string; unit: string }>();
-  (itemsData as { _id: ObjectId; name: string; billingName?: string; unit: string }[]).forEach((i) => {
+  (itemsData as unknown as { _id: ObjectId; name: string; billingName?: string; unit: string }[]).forEach((i) => {
     const displayName = (i.billingName as string)?.trim() || i.name;
     itemMap.set((i._id as ObjectId).toString(), { displayName, unit: i.unit });
   });
@@ -606,7 +608,7 @@ async function getSaleBillDataInternal(
     const [y, m, day] = d.split("-");
     return `${day}/${m}/${y}`;
   };
-  const items = (saleItems as { itemId: ObjectId; quantity: number; sellingPricePerUnit: number }[]).map((si) => {
+  const items = (saleItems as unknown as { itemId: ObjectId; quantity: number; sellingPricePerUnit: number }[]).map((si) => {
     const id = (si.itemId as ObjectId).toString();
     const qty = Number(si.quantity);
     const up = Number(si.sellingPricePerUnit);
@@ -622,8 +624,8 @@ async function getSaleBillDataInternal(
     businessName,
     billNumber,
     date: formatDate((sale as Record<string, unknown>).date as string),
-    customerName: (customer as { name: string })?.name ?? "",
-    customerPhone: (customer as { phone?: string })?.phone ?? null,
+    customerName: (customer as unknown as { name: string } | null)?.name ?? "",
+    customerPhone: (customer as unknown as { phone?: string } | null)?.phone ?? null,
     items,
     grandTotal: Number((sale as Record<string, unknown>).totalAmount),
     paymentCash: Number((sale as Record<string, unknown>).paymentCash),
@@ -688,20 +690,20 @@ export async function getDashboardData(): Promise<{
       is_confirmed: (s.status as string) === "completed" || Boolean(s.isConfirmed),
       status: (s.status as string) ?? "completed",
     })),
-    saleItems: (saleItems as { saleId: ObjectId; itemId: ObjectId; quantity: number; sellingPricePerUnit: number; costPricePerUnit?: number }[]).map((si) => ({
+    saleItems: (saleItems as unknown as { saleId: ObjectId; itemId: ObjectId; quantity: number; sellingPricePerUnit: number; costPricePerUnit?: number }[]).map((si) => ({
       sale_id: (si.saleId as ObjectId).toString(),
       item_id: (si.itemId as ObjectId).toString(),
       quantity: si.quantity,
       selling_price_per_unit: si.sellingPricePerUnit,
       cost_price_per_unit: Number(si.costPricePerUnit ?? 0),
     })),
-    stockEntries: (stockEntries as { itemId: ObjectId; date: string; quantity: number; costPricePerUnit: number }[]).map((e) => ({
+    stockEntries: (stockEntries as unknown as { itemId: ObjectId; date: string; quantity: number; costPricePerUnit: number }[]).map((e) => ({
       item_id: (e.itemId as ObjectId).toString(),
       date: e.date,
       quantity: e.quantity,
       cost_price_per_unit: e.costPricePerUnit,
     })),
-    items: (items as { _id: ObjectId; name: string }[]).map((i) => ({
+    items: (items as unknown as { _id: ObjectId; name: string }[]).map((i) => ({
       id: (i._id as ObjectId).toString(),
       name: i.name,
     })),
@@ -719,15 +721,15 @@ export async function getCustomersWithStats(): Promise<{
   const db = await getDb();
   const oid = new ObjectId(userId);
   const customers = await db.collection("customers").find({ userId: oid }).sort({ createdAt: -1 }).toArray();
-  const sales = await db.collection("sales").find({
+  const sales = (await db.collection("sales").find({
     userId: oid,
     $or: [{ status: "completed" }, { status: { $exists: false } }, { isConfirmed: true }],
-  }).toArray();
+  }).toArray()) as unknown as { customerId: ObjectId; date: string; totalAmount: number }[];
   const lastSaleByCustomer = new Map<string, string>();
   const totalSpendByCustomer = new Map<string, number>();
   const purchaseCountByCustomer = new Map<string, number>();
-  sales.forEach((s: { customerId: ObjectId; date: string; totalAmount: number }) => {
-    const cid = (s.customerId as ObjectId).toString();
+  sales.forEach((s) => {
+    const cid = s.customerId.toString();
     if (!lastSaleByCustomer.has(cid) || (s.date > (lastSaleByCustomer.get(cid) ?? ""))) {
       lastSaleByCustomer.set(cid, s.date);
     }

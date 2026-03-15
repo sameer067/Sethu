@@ -43,7 +43,7 @@ export const authOptions: NextAuthOptions = {
     jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.phone = user.phone;
+        token.phone = user.phone ?? undefined;
       }
       return token;
     },

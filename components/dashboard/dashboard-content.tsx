@@ -264,7 +264,6 @@ export function DashboardContent() {
     stockInRange,
     stockEntries,
     items,
-    saleIdsInRange,
   ]);
 
   const sortedBreakdown = useMemo(() => {
