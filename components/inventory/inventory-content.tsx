@@ -29,15 +29,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Item, StockEntry } from "@/lib/types";
-import { stockEntrySchema, type StockEntryFormValues } from "@/lib/validations/stock";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   getActiveItems,
   getStockEntries,
   getCurrentStock,
-  createStockEntry,
+  createStockEntries,
 } from "@/lib/actions";
 
 interface StockEntryRow extends StockEntry {
@@ -223,51 +220,90 @@ export function InventoryContent() {
   );
 }
 
+interface StockLine {
+  item_id: string;
+  quantity: number;
+  cost_price_per_unit: number;
+}
+
+const emptyLine = (): StockLine => ({ item_id: "", quantity: 1, cost_price_per_unit: 0 });
+
 function StockInForm({
   items,
   onSuccess,
 }: {
   items: Item[];
-  onSuccess: () => void;
+  onSuccess: () => void | Promise<void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    formState: { errors, isSubmitting },
-    reset,
-  } = useForm<StockEntryFormValues>({
-    resolver: zodResolver(stockEntrySchema),
-    defaultValues: { item_id: "", quantity: 1, cost_price_per_unit: 0, date: today, note: "" },
-  });
+  const [lines, setLines] = useState<StockLine[]>([emptyLine()]);
+  const [date, setDate] = useState(today);
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const itemId = watch("item_id");
+  function addLine() {
+    setLines((prev) => [...prev, emptyLine()]);
+  }
 
-  async function onSubmit(data: StockEntryFormValues) {
-    await createStockEntry({
-      item_id: data.item_id,
-      quantity: data.quantity,
-      cost_price_per_unit: data.cost_price_per_unit,
-      date: data.date,
-      note: data.note || null,
-    });
-    reset({
-      item_id: "",
-      quantity: 1,
-      cost_price_per_unit: 0,
-      date: today,
-      note: "",
-    });
-    onSuccess();
+  function updateLine(index: number, updates: Partial<StockLine>) {
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...updates } : l)));
+  }
+
+  function removeLine(index: number) {
+    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  }
+
+  const validLines = lines.filter(
+    (l) => l.item_id && Number(l.quantity) > 0 && Number(l.cost_price_per_unit) >= 0
+  );
+  const incompleteLines = lines.filter(
+    (l) => !l.item_id || !(Number(l.quantity) > 0)
+  ).length;
+  const grandTotal = validLines.reduce(
+    (sum, l) => sum + Number(l.quantity) * Number(l.cost_price_per_unit),
+    0
+  );
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    if (!date) {
+      setError("Date is required");
+      return;
+    }
+    if (incompleteLines > 0) {
+      setError("Every line needs an item and a quantity greater than 0 (or remove the empty line).");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const count = await createStockEntries({
+        date,
+        note: note.trim() || null,
+        lines: validLines,
+      });
+      setLines([emptyLine()]);
+      setNote("");
+      setDate(today);
+      setSuccess(`Added ${count} stock ${count === 1 ? "entry" : "entries"}.`);
+      await onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add stock. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Add stock</CardTitle>
-        <CardDescription>Record inward stock with cost.</CardDescription>
+        <CardDescription>
+          Record inward stock with cost. Add as many items as you need, then save them all at once.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {items.length === 0 ? (
@@ -275,74 +311,118 @@ function StockInForm({
             Add items in Settings first, then you can record stock here.
           </p>
         ) : (
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Item</Label>
-              <Select
-                required
-                value={itemId || ""}
-                onValueChange={(v) => setValue("item_id", v)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select item" />
-                </SelectTrigger>
-                <SelectContent>
-                  {items.map((i) => (
-                    <SelectItem key={i.id} value={i.id}>
-                      {i.name} ({i.unit})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.item_id && (
-                <p className="text-sm text-destructive">{errors.item_id.message}</p>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="quantity">Quantity</Label>
-                <Input
-                  id="quantity"
-                  type="number"
-                  step="any"
-                  min="0.001"
-                  {...register("quantity")}
-                />
-                {errors.quantity && (
-                  <p className="text-sm text-destructive">{errors.quantity.message}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cost">Cost per unit (₹)</Label>
-                <Input
-                  id="cost"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  {...register("cost_price_per_unit")}
-                />
-                {errors.cost_price_per_unit && (
-                  <p className="text-sm text-destructive">
-                    {errors.cost_price_per_unit.message}
-                  </p>
-                )}
-              </div>
-            </div>
+          <form onSubmit={onSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="date">Date</Label>
-                <Input id="date" type="date" {...register("date")} />
-                {errors.date && (
-                  <p className="text-sm text-destructive">{errors.date.message}</p>
-                )}
+                <Input
+                  id="date"
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="note">Note (optional)</Label>
-                <Input id="note" {...register("note")} placeholder="e.g. Batch #" />
+                <Input
+                  id="note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="e.g. Batch # / supplier"
+                />
               </div>
             </div>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Adding…" : "Add stock"}
+
+            <div className="space-y-3">
+              {lines.map((line, index) => (
+                <div
+                  key={index}
+                  className="grid grid-cols-2 md:grid-cols-12 gap-2 items-end border-b pb-3 last:border-b-0"
+                >
+                  <div className="col-span-2 md:col-span-5">
+                    <Label className="text-xs">Item</Label>
+                    <Select
+                      value={line.item_id || ""}
+                      onValueChange={(v) => updateLine(index, { item_id: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select item" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {items.map((i) => (
+                          <SelectItem key={i.id} value={i.id}>
+                            {i.name} ({i.unit})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-xs">Qty</Label>
+                    <Input
+                      type="number"
+                      min="0.001"
+                      step="any"
+                      value={line.quantity || ""}
+                      onChange={(e) =>
+                        updateLine(index, { quantity: parseFloat(e.target.value) || 0 })
+                      }
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label className="text-xs">Cost/unit (₹)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.cost_price_per_unit ? String(line.cost_price_per_unit) : ""}
+                      onChange={(e) =>
+                        updateLine(index, {
+                          cost_price_per_unit: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="col-span-2 md:col-span-3 flex items-center justify-between gap-1">
+                    <span className="text-sm text-muted-foreground">
+                      Line: {formatCurrency(Number(line.quantity) * Number(line.cost_price_per_unit))}
+                    </span>
+                    {lines.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeLine(index)}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Button type="button" variant="outline" onClick={addLine}>
+              Add line
+            </Button>
+
+            <p className="font-semibold">
+              Total cost: {formatCurrency(grandTotal)}
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                ({validLines.length} {validLines.length === 1 ? "item" : "items"})
+              </span>
+            </p>
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {success && <p className="text-sm text-green-600">{success}</p>}
+
+            <Button type="submit" disabled={submitting || validLines.length === 0}>
+              {submitting
+                ? "Adding…"
+                : validLines.length > 1
+                ? `Add ${validLines.length} items to stock`
+                : "Add stock"}
             </Button>
           </form>
         )}
