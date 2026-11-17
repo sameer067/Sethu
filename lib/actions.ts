@@ -198,6 +198,33 @@ export async function createStockEntry(data: {
   });
 }
 
+export async function createStockEntries(data: {
+  date: string;
+  note?: string | null;
+  lines: { item_id: string; quantity: number; cost_price_per_unit: number }[];
+}): Promise<number> {
+  const userId = await getUserId();
+  const lines = data.lines.filter(
+    (l) => l.item_id && Number(l.quantity) > 0 && Number(l.cost_price_per_unit) >= 0
+  );
+  if (!data.date) throw new Error("Date is required");
+  if (lines.length === 0) throw new Error("Add at least one item");
+  const db = await getDb();
+  const now = new Date();
+  await db.collection("stock_entries").insertMany(
+    lines.map((l) => ({
+      userId: new ObjectId(userId),
+      itemId: new ObjectId(l.item_id),
+      quantity: Number(l.quantity),
+      costPricePerUnit: Number(l.cost_price_per_unit),
+      date: data.date,
+      note: data.note?.trim() || null,
+      createdAt: now,
+    }))
+  );
+  return lines.length;
+}
+
 // ---- Customers ----
 export async function getCustomers(): Promise<Customer[]> {
   const userId = await getUserId();
