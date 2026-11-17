@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumericInput } from "@/components/ui/numeric-input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -435,34 +436,25 @@ export function SalesDetail({ saleId, initialData }: SalesDetailProps) {
                   </Select>
                 </div>
                 <div>
-                  <Input
-                    type="number"
+                  <NumericInput
                     min="0.001"
                     step="any"
                     max={line.item_id ? getMaxQty(line.item_id, index) : undefined}
                     placeholder="Qty"
-                    value={line.quantity || ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value) || 0;
-                      updateLine(index, { quantity: clampQuantity(index, val) });
-                    }}
+                    value={line.quantity}
+                    onValueChange={(v) =>
+                      updateLine(index, { quantity: clampQuantity(index, v) })
+                    }
                   />
                 </div>
                 <div>
-                  <Input
-                    type="number"
+                  <NumericInput
                     min="0"
                     step="0.01"
                     placeholder="Price/unit"
-                    value={
-                      line.selling_price_per_unit
-                        ? String(line.selling_price_per_unit)
-                        : ""
-                    }
-                    onChange={(e) =>
-                      updateLine(index, {
-                        selling_price_per_unit: parseFloat(e.target.value) || 0,
-                      })
+                    value={line.selling_price_per_unit}
+                    onValueChange={(v) =>
+                      updateLine(index, { selling_price_per_unit: v })
                     }
                   />
                 </div>

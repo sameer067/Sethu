@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumericInput } from "@/components/ui/numeric-input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -417,33 +418,24 @@ export function NewSaleContent() {
                 </div>
                 <div>
                   <Label className="text-xs">Qty</Label>
-                  <Input
-                    type="number"
+                  <NumericInput
                     min="0.001"
                     step="any"
                     max={line.item_id ? getMaxQtyNewSale(line.item_id, index) : undefined}
-                    value={line.quantity || ""}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value) || 0;
-                      updateLine(index, { quantity: clampQtyNewSale(index, val) });
-                    }}
+                    value={line.quantity}
+                    onValueChange={(v) =>
+                      updateLine(index, { quantity: clampQtyNewSale(index, v) })
+                    }
                   />
                 </div>
                 <div>
                   <Label className="text-xs">Price/unit (₹)</Label>
-                  <Input
-                    type="number"
+                  <NumericInput
                     min="0"
                     step="0.01"
-                    value={
-                      line.selling_price_per_unit
-                        ? String(line.selling_price_per_unit)
-                        : ""
-                    }
-                    onChange={(e) =>
-                      updateLine(index, {
-                        selling_price_per_unit: parseFloat(e.target.value) || 0,
-                      })
+                    value={line.selling_price_per_unit}
+                    onValueChange={(v) =>
+                      updateLine(index, { selling_price_per_unit: v })
                     }
                   />
                 </div>

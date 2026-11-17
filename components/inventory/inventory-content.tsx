@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumericInput } from "@/components/ui/numeric-input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -360,28 +361,20 @@ function StockInForm({
                   </div>
                   <div className="md:col-span-2">
                     <Label className="text-xs">Qty</Label>
-                    <Input
-                      type="number"
+                    <NumericInput
                       min="0.001"
                       step="any"
-                      value={line.quantity || ""}
-                      onChange={(e) =>
-                        updateLine(index, { quantity: parseFloat(e.target.value) || 0 })
-                      }
+                      value={line.quantity}
+                      onValueChange={(v) => updateLine(index, { quantity: v })}
                     />
                   </div>
                   <div className="md:col-span-2">
                     <Label className="text-xs">Cost/unit (₹)</Label>
-                    <Input
-                      type="number"
+                    <NumericInput
                       min="0"
                       step="0.01"
-                      value={line.cost_price_per_unit ? String(line.cost_price_per_unit) : ""}
-                      onChange={(e) =>
-                        updateLine(index, {
-                          cost_price_per_unit: parseFloat(e.target.value) || 0,
-                        })
-                      }
+                      value={line.cost_price_per_unit}
+                      onValueChange={(v) => updateLine(index, { cost_price_per_unit: v })}
                     />
                   </div>
                   <div className="col-span-2 md:col-span-3 flex items-center justify-between gap-1">
