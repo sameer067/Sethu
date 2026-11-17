@@ -225,6 +225,111 @@ export async function createStockEntries(data: {
   return lines.length;
 }
 
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** Stock for one item: total inward minus quantity sold in completed sales. */
+async function getItemStock(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userOid: ObjectId,
+  itemOid: ObjectId
+): Promise<{ stock: number; sold: number }> {
+  const entries = (await db
+    .collection("stock_entries")
+    .find({ userId: userOid, itemId: itemOid })
+    .project({ quantity: 1 })
+    .toArray()) as unknown as { quantity: number }[];
+  const stockIn = entries.reduce((s, e) => s + Number(e.quantity), 0);
+  const sales = (await db
+    .collection("sales")
+    .find({
+      userId: userOid,
+      $or: [{ status: "completed" }, { status: { $exists: false }, isConfirmed: true }],
+    })
+    .project({ _id: 1 })
+    .toArray()) as unknown as { _id: ObjectId }[];
+  const saleItems = (await db
+    .collection("sale_items")
+    .find({ saleId: { $in: sales.map((s) => s._id) }, itemId: itemOid })
+    .project({ quantity: 1 })
+    .toArray()) as unknown as { quantity: number }[];
+  const sold = saleItems.reduce((s, si) => s + Number(si.quantity), 0);
+  return { stock: stockIn - sold, sold };
+}
+
+/** Error message if removing `qty` from an item would leave its stock below zero, else null. */
+async function checkStockReduction(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userOid: ObjectId,
+  itemOid: ObjectId,
+  qty: number
+): Promise<string | null> {
+  const { stock, sold } = await getItemStock(db, userOid, itemOid);
+  const after = stock - qty;
+  if (after >= 0) return null;
+  const item = await db.collection("items").findOne({ _id: itemOid, userId: userOid });
+  const name = (item?.name as string) ?? "this item";
+  const unit = (item?.unit as string) ?? "";
+  return `Not allowed: ${sold} ${unit} of ${name} has already been sold, so stock would drop to ${Number(after.toFixed(3))} ${unit}.`.replace(/\s+/g, " ");
+}
+
+export async function updateStockEntry(
+  id: string,
+  data: { item_id: string; quantity: number; cost_price_per_unit: number; date: string; note?: string | null }
+): Promise<ActionResult> {
+  const userOid = new ObjectId(await getUserId());
+  if (!ObjectId.isValid(id) || !ObjectId.isValid(data.item_id)) return { ok: false, error: "Invalid entry or item." };
+  const quantity = Number(data.quantity);
+  const cost = Number(data.cost_price_per_unit);
+  if (!(quantity > 0)) return { ok: false, error: "Quantity must be greater than 0." };
+  if (!(cost >= 0)) return { ok: false, error: "Cost must be 0 or more." };
+  if (!data.date) return { ok: false, error: "Date is required." };
+
+  const db = await getDb();
+  const entryOid = new ObjectId(id);
+  const newItemOid = new ObjectId(data.item_id);
+  const existing = await db.collection("stock_entries").findOne({ _id: entryOid, userId: userOid });
+  if (!existing) return { ok: false, error: "Stock entry not found." };
+  const newItem = await db.collection("items").findOne({ _id: newItemOid, userId: userOid });
+  if (!newItem) return { ok: false, error: "Item not found." };
+
+  // The old item loses the old quantity (and regains the new one if the item is unchanged).
+  const oldItemOid = existing.itemId as ObjectId;
+  const sameItem = oldItemOid.equals(newItemOid);
+  const reduction = Number(existing.quantity) - (sameItem ? quantity : 0);
+  if (reduction > 0) {
+    const err = await checkStockReduction(db, userOid, oldItemOid, reduction);
+    if (err) return { ok: false, error: err };
+  }
+
+  await db.collection("stock_entries").updateOne(
+    { _id: entryOid, userId: userOid },
+    {
+      $set: {
+        itemId: newItemOid,
+        quantity,
+        costPricePerUnit: cost,
+        date: data.date,
+        note: data.note?.trim() || null,
+        updatedAt: new Date(),
+      },
+    }
+  );
+  return { ok: true };
+}
+
+export async function deleteStockEntry(id: string): Promise<ActionResult> {
+  const userOid = new ObjectId(await getUserId());
+  if (!ObjectId.isValid(id)) return { ok: false, error: "Invalid entry." };
+  const db = await getDb();
+  const entryOid = new ObjectId(id);
+  const existing = await db.collection("stock_entries").findOne({ _id: entryOid, userId: userOid });
+  if (!existing) return { ok: false, error: "Stock entry not found." };
+  const err = await checkStockReduction(db, userOid, existing.itemId as ObjectId, Number(existing.quantity));
+  if (err) return { ok: false, error: err };
+  await db.collection("stock_entries").deleteOne({ _id: entryOid, userId: userOid });
+  return { ok: true };
+}
+
 // ---- Customers ----
 export async function getCustomers(): Promise<Customer[]> {
   const userId = await getUserId();

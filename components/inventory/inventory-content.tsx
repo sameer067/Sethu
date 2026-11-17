@@ -27,6 +27,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Item, StockEntry } from "@/lib/types";
@@ -36,6 +44,8 @@ import {
   getStockEntries,
   getCurrentStock,
   createStockEntries,
+  updateStockEntry,
+  deleteStockEntry,
 } from "@/lib/actions";
 
 interface StockEntryRow extends StockEntry {
@@ -57,6 +67,9 @@ export function InventoryContent() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [loadingEntries, setLoadingEntries] = useState(true);
   const [loadingStock, setLoadingStock] = useState(true);
+  const [editing, setEditing] = useState<StockEntryRow | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
 
   useEffect(() => {
     getActiveItems()
@@ -91,6 +104,25 @@ export function InventoryContent() {
     ]);
     setEntries(newEntries);
     setCurrentStock(newStock);
+  }
+
+  async function handleDelete(entry: StockEntryRow) {
+    const label = `${entry.quantity} ${entry.items?.unit ?? ""} of ${entry.items?.name ?? "this item"} on ${formatDate(entry.date)}`;
+    if (!confirm(`Delete stock entry: ${label}?\nThis cannot be undone.`)) return;
+    setLedgerError(null);
+    setDeletingId(entry.id);
+    try {
+      const result = await deleteStockEntry(entry.id);
+      if (!result.ok) {
+        setLedgerError(result.error);
+        return;
+      }
+      await refreshAfterStockIn();
+    } catch {
+      setLedgerError("Could not delete the entry. Please try again.");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   return (
@@ -166,6 +198,9 @@ export function InventoryContent() {
               )}
             </CardHeader>
             <CardContent>
+              {ledgerError && (
+                <p className="mb-3 text-sm text-destructive">{ledgerError}</p>
+              )}
               {loadingEntries ? (
                 <Skeleton className="h-40 w-full" />
               ) : filteredEntries.length === 0 ? (
@@ -184,6 +219,7 @@ export function InventoryContent() {
                         <TableHead className="text-right">Cost/unit</TableHead>
                         <TableHead className="text-right">Total cost</TableHead>
                         <TableHead>Note</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -207,6 +243,29 @@ export function InventoryContent() {
                           <TableCell className="max-w-[120px] truncate">
                             {e.note ?? "—"}
                           </TableCell>
+                          <TableCell className="text-right whitespace-nowrap">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setLedgerError(null);
+                                setEditing(e);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              disabled={deletingId === e.id}
+                              onClick={() => handleDelete(e)}
+                            >
+                              {deletingId === e.id ? "Deleting…" : "Delete"}
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -215,9 +274,155 @@ export function InventoryContent() {
               )}
             </CardContent>
           </Card>
+          <EditStockEntryDialog
+            entry={editing}
+            items={items}
+            onClose={() => setEditing(null)}
+            onSaved={async () => {
+              setEditing(null);
+              await refreshAfterStockIn();
+            }}
+          />
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function EditStockEntryDialog({
+  entry,
+  items,
+  onClose,
+  onSaved,
+}: {
+  entry: StockEntryRow | null;
+  items: Item[];
+  onClose: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  return (
+    <Dialog open={entry !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit stock entry</DialogTitle>
+          <DialogDescription>
+            Current stock is recalculated from entries, so changes apply immediately.
+          </DialogDescription>
+        </DialogHeader>
+        {/* Keyed so the form resets each time a different entry is opened. */}
+        {entry && (
+          <EditStockEntryForm key={entry.id} entry={entry} items={items} onCancel={onClose} onSaved={onSaved} />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditStockEntryForm({
+  entry,
+  items,
+  onCancel,
+  onSaved,
+}: {
+  entry: StockEntryRow;
+  items: Item[];
+  onCancel: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [itemId, setItemId] = useState(entry.item_id);
+  const [quantity, setQuantity] = useState(Number(entry.quantity));
+  const [cost, setCost] = useState(Number(entry.cost_price_per_unit));
+  const [date, setDate] = useState(entry.date);
+  const [note, setNote] = useState(entry.note ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // The entry's item may since have been deactivated; keep it selectable.
+  const options =
+    items.some((i) => i.id === entry.item_id) || !entry.items
+      ? items
+      : [
+          { id: entry.item_id, name: entry.items.name, unit: entry.items.unit } as Item,
+          ...items,
+        ];
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!itemId) return setError("Select an item.");
+    if (!(quantity > 0)) return setError("Quantity must be greater than 0.");
+    if (!date) return setError("Date is required.");
+    setSaving(true);
+    try {
+      const result = await updateStockEntry(entry.id, {
+        item_id: itemId,
+        quantity,
+        cost_price_per_unit: cost,
+        date,
+        note: note.trim() || null,
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      await onSaved();
+    } catch {
+      setError("Could not save changes. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <Label>Item</Label>
+        <Select value={itemId} onValueChange={setItemId}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select item" />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((i) => (
+              <SelectItem key={i.id} value={i.id}>
+                {i.name} ({i.unit})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="edit-qty">Quantity</Label>
+          <NumericInput id="edit-qty" min="0.001" step="any" value={quantity} onValueChange={setQuantity} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="edit-cost">Cost/unit (₹)</Label>
+          <NumericInput id="edit-cost" min="0" step="0.01" value={cost} onValueChange={setCost} />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="edit-date">Date</Label>
+          <Input id="edit-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="edit-note">Note (optional)</Label>
+          <Input id="edit-note" value={note} onChange={(e) => setNote(e.target.value)} />
+        </div>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Total cost: {formatCurrency(quantity * cost)}
+      </p>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }
 
