@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, invoiceFileName } from "@/lib/utils";
 import { pdf } from "@react-pdf/renderer";
 import { BillDocument, getLogoDataUrl, type BillData } from "@/components/pdf/bill-document";
 import {
@@ -217,7 +217,7 @@ export function SalesDetail({ saleId, initialData }: SalesDetailProps) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${billData.billNumber}.pdf`;
+        a.download = invoiceFileName(billData.billNumber, billData.customerName);
         a.click();
         URL.revokeObjectURL(url);
       }
@@ -240,7 +240,7 @@ export function SalesDetail({ saleId, initialData }: SalesDetailProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${billData.billNumber}.pdf`;
+      a.download = invoiceFileName(billData.billNumber, billData.customerName);
       a.click();
       URL.revokeObjectURL(url);
     } catch (_) {
@@ -275,7 +275,7 @@ export function SalesDetail({ saleId, initialData }: SalesDetailProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Draft-${saleId.slice(-6)}.pdf`;
+      a.download = invoiceFileName(`Draft-${saleId.slice(-6)}`, billData.customerName);
       a.click();
       URL.revokeObjectURL(url);
     } catch (_) {

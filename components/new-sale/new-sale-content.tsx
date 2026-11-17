@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Item, Customer } from "@/lib/types";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, invoiceFileName } from "@/lib/utils";
 import { pdf } from "@react-pdf/renderer";
 import { BillDocument, getLogoDataUrl, type BillData } from "@/components/pdf/bill-document";
 import {
@@ -257,7 +257,7 @@ export function NewSaleContent() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${billNumber}.pdf`;
+        a.download = invoiceFileName(billNumber!, selectedCustomer.name);
         a.click();
         URL.revokeObjectURL(url);
       } catch (_) {}

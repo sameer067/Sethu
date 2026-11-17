@@ -21,3 +21,17 @@ export function formatDate(date: Date | string): string {
   const year = d.getFullYear();
   return `${day}/${month}/${year}`;
 }
+
+/**
+ * PDF filename for an invoice, e.g. "INV-0012_Ramesh_Kumar.pdf".
+ * Strips characters that are invalid in filenames and falls back to just
+ * the bill number when there is no customer name.
+ */
+export function invoiceFileName(billNumber: string, customerName?: string | null): string {
+  const name = (customerName ?? "")
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 60);
+  return name ? `${billNumber}_${name}.pdf` : `${billNumber}.pdf`;
+}
